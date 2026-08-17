@@ -217,6 +217,10 @@
       linear-gradient(135deg, var(--bg-raised) 0%, var(--bg) 100%);
   }
 
+  .poster-wrap.stream-missing img {
+    opacity: 0.5;
+  }
+
   .poster-wrap.no-image::before {
     content: "";
     position: absolute;
@@ -499,7 +503,7 @@
       : '';
     return `
       <button class="card" type="button" data-idx="${idx}" aria-label="Play ${escapeHtml(m.t)}">
-        <div class="poster-wrap">
+        <div class="poster-wrap" data-h="${escapeHtml(m.h || '')}">
           ${poster}
           <span class="play-icon" aria-hidden="true">
             <svg viewBox="0 0 16 16"><path d="M3 1.5v13l11-6.5-11-6.5z"/></svg>
@@ -542,6 +546,50 @@
     grid.innerHTML = list.map(cardHtml).join('');
     countEl.textContent = list.length;
     emptyState.style.display = list.length === 0 ? 'block' : 'none';
+    checkStreamAvailability();
+  }
+
+  // ---------- Stream existence check ----------
+  // Dims a card's poster photo to half opacity if its linked .m3u8 file
+  // can't be found on the server.
+
+  const streamStatusCache = new Map();
+
+  async function streamExists(h) {
+    if (streamStatusCache.has(h)) return streamStatusCache.get(h);
+    const check = (async () => {
+      try {
+        let res = await fetch(h, { method: 'HEAD', cache: 'no-store' });
+        if (res.status === 405 || res.status === 501) {
+          // Some static servers don't support HEAD; fall back to GET.
+          res = await fetch(h, { method: 'GET', cache: 'no-store' });
+        }
+        return res.ok;
+      } catch (err) {
+        return false;
+      }
+    })();
+    streamStatusCache.set(h, check);
+    return check;
+  }
+
+  function checkStreamAvailability() {
+    const wraps = Array.from(grid.querySelectorAll('.poster-wrap[data-h]'))
+      .filter(w => w.dataset.h && w.querySelector('img'));
+
+    const CONCURRENCY = 8;
+    let cursor = 0;
+
+    function runNext() {
+      if (cursor >= wraps.length) return;
+      const wrap = wraps[cursor++];
+      const h = wrap.dataset.h;
+      streamExists(h).then(exists => {
+        wrap.classList.toggle('stream-missing', !exists);
+      }).finally(runNext);
+    }
+
+    for (let i = 0; i < CONCURRENCY; i++) runNext();
   }
 
   searchInput.addEventListener('input', render);
